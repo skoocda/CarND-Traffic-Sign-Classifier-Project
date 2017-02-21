@@ -1,6 +1,9 @@
+checkpoint
 data
 .ipynb_checkpoints
 *.h5
 models
 *.swp
 *.p
+__pycache__
+early*

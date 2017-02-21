@@ -18,7 +18,7 @@ class Paths(object):
         self.var_scope = self.get_variables_scope(params)
         self.root_path = os.getcwd() + '/models/' + self.model_name + '/'
         self.model_path = self.get_model_path()
-        self.training_history_path = self.get_train_history_path()
+        self.training_history_path = self.get_training_history_path()
         self.learning_curves_path = self.get_learning_curves_path()
         os.makedirs(self.root_path, exist_ok=True)
 
@@ -45,8 +45,8 @@ class Paths(object):
     def get_model_path(self):
         return self.root_path + 'model.ckpt'
 
-    def get_train_history_path(self):
-        return self.root_path + 'train_history'
+    def get_training_history_path(self):
+        return self.root_path + 'training_history'
     
     def get_learning_curves_path(self):
         return self.root_path + 'learning_curves.png'
@@ -116,10 +116,10 @@ def log_parameters(log, params, train_size, valid_size, test_size):
     print('   Resume old model: ' + ('Enabled' if params.resume_training else 'Disabled'))
 
 def plot_curve(axis, params, train_column, valid_column, linewidth=2, train_linestyle='b-', valid_linestyle='g-'):
-    model_history = np.load(Paths(params).train_history_path + '.npz')
+    model_history = np.load(Paths(params).training_history_path + '.npz')
     train_values = model_history[train_column]
     valid_values = model_history[valid_column]
-    epochs = train_values.shape(0)
+    epochs = train_values.shape[0]
     x_axis = np.arange(epochs)
     axis.plot(x_axis[train_values > 0], train_values[train_values > 0], train_linestyle, linewidth=linewidth, label='train')
     axis.plot(x_axis[valid_values > 0], valid_values[valid_values > 0], valid_linestyle, linewidth=linewidth, label='valid')
@@ -172,7 +172,6 @@ def model_pass(input, params, is_training):
     shape = pool2.get_shape().as_list()
     pool2 = tf.reshape(pool2, [-1, shape[1] * shape[2] * shape[3]])
 
- #   pool3 = pool(pool3, size=2) #not in code
     shape = pool3.get_shape().as_list()
     pool3 = tf.reshape(pool3, [-1, shape[1] * shape[2] * shape[3]])
 
@@ -186,6 +185,43 @@ def model_pass(input, params, is_training):
     return logits
 
 
+def cpu_model_pass(input, params, is_training):
+    with tf.device('/cpu:0'):
+        with tf.variable_scope('conv1'):
+            conv1 = conv_relu(input, kernel_size=params.conv1_k, depth=params.conv1_d)
+        with tf.variable_scope('pool1'):
+            pool1 = pool(conv1, size=2)
+            pool1 = tf.cond(is_training, lambda: tf.nn.dropout(pool1, keep_prob=params.conv1_p), lambda: pool1)
+        with tf.variable_scope('conv2'):
+            conv2 = conv_relu(input, kernel_size=params.conv2_k, depth=params.conv2_d)
+        with tf.variable_scope('pool2'):
+            pool2 = pool(conv2, size=2)
+            pool2 = tf.cond(is_training, lambda: tf.nn.dropout(pool2, keep_prob=params.conv2_p), lambda: pool2)
+        with tf.variable_scope('conv3'):
+            conv3 = conv_relu(input, kernel_size=params.conv3_k, depth=params.conv3_d)
+        with tf.variable_scope('pool3'):
+            pool3 = pool(conv3, size=2)
+            pool3 = tf.cond(is_training, lambda: tf.nn.dropout(pool3, keep_prob=params.conv3_p), lambda: pool3)
+
+        pool1 = pool(pool1, size=4)
+        shape = pool1.get_shape().as_list()
+        pool1 = tf.reshape(pool1, [-1, shape[1] * shape[2] * shape[3]])
+
+        pool2 = pool(pool2, size=2)
+        shape = pool2.get_shape().as_list()
+        pool2 = tf.reshape(pool2, [-1, shape[1] * shape[2] * shape[3]])
+
+        shape = pool3.get_shape().as_list()
+        pool3 = tf.reshape(pool3, [-1, shape[1] * shape[2] * shape[3]])
+
+        flattened = tf.concat(1, [pool1, pool2, pool3])
+
+        with tf.variable_scope('fc4'):
+            fc4 = fully_connected_relu(flattened, size=params.fc4_size)
+            fc4 = tf.cond(is_training, lambda: tf.nn.dropout(fc4, keep_prob=params.fc4_p), lambda: fc4)
+        with tf.variable_scope('out'):
+            logits = fully_connected(fc4, size=params.num_classes)
+    return logits
 
 
 def train_model(params, X_train, y_train, X_valid, y_valid, X_test, y_test):
@@ -316,6 +352,6 @@ def train_model(params, X_train, y_train, X_valid, y_valid, X_test, y_test):
 
         saved_model_path = saver.save(session, paths.model_path)
         print("Model file: "+ saved_model_path)
-        np.savez(paths.train_history_path, train_loss_history=train_loss_history, train_accuracy_history=train_accuracy_history, valid_loss_history=valid_loss_history, valid_accuracy_history=valid_accuracy_history)
-        print("Training history file:"+ paths.train_history_path)
+        np.savez(paths.training_history_path, train_loss_history=train_loss_history, train_accuracy_history=train_accuracy_history, valid_loss_history=valid_loss_history, valid_accuracy_history=valid_accuracy_history)
+        print("Training history file:"+ paths.training_history_path)
         plot_learning_curves(params)
